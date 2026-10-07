@@ -1,5 +1,7 @@
 // ─── FileForge Web ───────────────────────────────────────────────
 
+import { FFmpeg } from './ffmpeg/ffmpeg.mjs';
+
 class FileForgeWeb {
     constructor() {
         this.files = [];
@@ -75,25 +77,29 @@ class FileForgeWeb {
         if (this.ffmpegLoadPromise) return this.ffmpegLoadPromise;
 
         this.ffmpegLoading = true;
-        this.updateProgress(0, 'baixando ffmpeg (~30MB)... aguarde');
+        this.updateProgress(0, 'carregando ffmpeg (~30MB)... aguarde');
+
         this.ffmpegLoadPromise = (async () => {
             try {
-                if (!window.FFmpegWASM?.FFmpeg) {
-                    throw new Error('biblioteca FFmpeg não encontrada');
-                }
                 if (!window.crossOriginIsolated || typeof SharedArrayBuffer === 'undefined') {
-                    throw new Error('conversão de vídeo exige COOP/COEP ativo. Use um servidor HTTP com Cross-Origin-Opener-Policy: same-origin e Cross-Origin-Embedder-Policy: require-corp.');
+                    throw new Error(
+                        'Este site precisa dos headers COOP/COEP para rodar o FFmpeg. ' +
+                        'Use a Vercel ou um servidor com Cross-Origin-Opener-Policy: same-origin e ' +
+                        'Cross-Origin-Embedder-Policy: require-corp.'
+                    );
                 }
-                const { FFmpeg } = window.FFmpegWASM;
+
                 this.ffmpeg = new FFmpeg();
 
                 this.ffmpeg.on('log', ({ message }) => console.log('[ffmpeg]', message));
+
                 this.ffmpeg.on('progress', ({ progress }) => {
                     const pct = Math.min(Math.max(progress * 100, 0), 100);
                     this.updateProgress(pct, `convertendo... ${pct.toFixed(0)}%`);
                 });
 
                 const base = new URL('ffmpeg/', window.location.href).href;
+
                 await this.ffmpeg.load({
                     coreURL: `${base}ffmpeg-core.js`,
                     wasmURL: `${base}ffmpeg-core.wasm`,
@@ -110,6 +116,7 @@ class FileForgeWeb {
                 this.ffmpegLoadPromise = null;
             }
         })();
+
         return this.ffmpegLoadPromise;
     }
 
@@ -129,22 +136,28 @@ class FileForgeWeb {
     // ─── FILE MANAGEMENT ──────────────────────────────────────────
     addFiles(newFiles) {
         if (this.isConverting) return;
+
         const unsupported = newFiles.filter(file => !this.getCategory(file));
         if (unsupported.length) {
-            alert(`Formato não suportado: ${unsupported.map(file => file.name).join(', ')}`);
+            alert(`Formato não suportado: ${unsupported.map(f => f.name).join(', ')}`);
         }
+
         const supportedFiles = newFiles.filter(file => this.getCategory(file));
         const categories = new Set(supportedFiles.map(file => this.getCategory(file)));
-        if (categories.size > 1 || (categories.size === 1 && this.files.length &&
-            !this.files.every(file => this.getCategory(file) === [...categories][0]))) {
+
+        if (categories.size > 1 ||
+            (categories.size === 1 && this.files.length &&
+             !this.files.every(file => this.getCategory(file) === [...categories][0]))) {
             alert('Adicione arquivos de apenas um tipo por vez (imagens, vídeos ou textos).');
             return;
         }
+
         for (const file of supportedFiles) {
             if (!this.files.some(f => f.name === file.name && f.size === file.size)) {
                 this.files.push(file);
             }
         }
+
         this.updateFormatOptions();
         this.render();
     }
@@ -178,13 +191,18 @@ class FileForgeWeb {
     updateFormatOptions() {
         const category = this.files.length ? this.getCategory(this.files[0]) : null;
         const groups = [...this.formatSelect.querySelectorAll('optgroup[data-category]')];
-        for (const group of groups) group.disabled = Boolean(category && group.dataset.category !== category);
+
+        for (const group of groups) {
+            group.disabled = Boolean(category && group.dataset.category !== category);
+        }
+
         const selectedGroup = groups.find(group => group.dataset.category === category);
         if (selectedGroup && !selectedGroup.querySelector(`option[value="${this.formatSelect.value}"]`)) {
             this.formatSelect.value = selectedGroup.querySelector('option').value;
         } else if (!category && !groups.find(group => group.querySelector(`option[value="${this.formatSelect.value}"]`))) {
             this.formatSelect.value = 'png';
         }
+
         this.updateQualityAvailability();
     }
 
@@ -241,7 +259,6 @@ class FileForgeWeb {
         if (file.type.startsWith('image/')) return '🖼️';
         if (file.type.startsWith('video/')) return '🎬';
         if (file.type === 'text/plain') return '📄';
-        if (file.type === 'application/pdf') return '📕';
         return '📎';
     }
 
@@ -330,24 +347,29 @@ class FileForgeWeb {
     }
 
     async convert(file, format, quality) {
-        if (this.getCategory(file) === 'image') {
+        const category = this.getCategory(file);
+
+        if (category === 'image') {
             if (!['png', 'jpg', 'webp'].includes(format)) {
-                return { name: file.name, success: false, error: 'formato de saída incompatível com imagem' };
+                return { name: file.name, success: false, error: 'formato incompatível com imagem' };
             }
             return this.convertImage(file, format, quality);
         }
-        if (this.getCategory(file) === 'video') {
+
+        if (category === 'video') {
             if (!['mp4', 'webm', 'gif'].includes(format)) {
-                return { name: file.name, success: false, error: 'formato de saída incompatível com vídeo' };
+                return { name: file.name, success: false, error: 'formato incompatível com vídeo' };
             }
             return this.convertVideo(file, format, quality);
         }
-        if (this.getCategory(file) === 'text') {
+
+        if (category === 'text') {
             if (!['txt', 'md'].includes(format)) {
-                return { name: file.name, success: false, error: 'formato de saída incompatível com texto' };
+                return { name: file.name, success: false, error: 'formato incompatível com texto' };
             }
             return this.convertText(file, format);
         }
+
         return { name: file.name, success: false, error: 'formato não suportado' };
     }
 
@@ -374,6 +396,7 @@ class FileForgeWeb {
                         const mime = `image/${format === 'jpg' ? 'jpeg' : format}`;
                         const baseName = file.name.replace(/\.[^.]+$/, '');
                         const outName = `${baseName}.${format}`;
+
                         canvas.toBlob((blob) => {
                             if (!blob || blob.type !== mime) {
                                 reject(new Error(`seu navegador não consegue gerar ${format.toUpperCase()}`));
@@ -417,11 +440,13 @@ class FileForgeWeb {
         try {
             const fileData = new Uint8Array(await file.arrayBuffer());
             await this.ffmpeg.writeFile(inputName, fileData);
+
             const args = this.buildFFmpegArgs(inputName, outputName, format, quality);
             await this.ffmpeg.exec(args);
+
             const data = await this.ffmpeg.readFile(outputName);
             const mime = this.getMimeForFormat(format);
-            const blob = new Blob([data], { type: mime });
+            const blob = new Blob([data.buffer], { type: mime });
             dataUrl = URL.createObjectURL(blob);
             this.resultUrls.add(dataUrl);
         } catch (err) {
@@ -434,8 +459,8 @@ class FileForgeWeb {
         return {
             name: `${baseName}.${format}`,
             success: true,
-            dataUrl: dataUrl,
-            format: format,
+            dataUrl,
+            format,
             isImage: format === 'gif',
             isVideo: format === 'mp4' || format === 'webm'
         };
@@ -511,8 +536,8 @@ class FileForgeWeb {
                 resolve({
                     name: outName,
                     success: true,
-                    dataUrl: dataUrl,
-                    format: format,
+                    dataUrl,
+                    format,
                     isImage: false
                 });
             };
@@ -530,12 +555,10 @@ class FileForgeWeb {
             if (r.success) {
                 ok++;
                 let preview = '';
-                if (r.isImage && r.format !== 'gif') {
+                if (r.format === 'gif' || (r.isImage && r.format !== 'gif')) {
                     preview = `<img src="${r.dataUrl}" alt="${this.escape(r.name)}" class="preview">`;
                 } else if (r.isVideo) {
                     preview = `<video src="${r.dataUrl}" class="preview" controls muted></video>`;
-                } else if (r.format === 'gif') {
-                    preview = `<img src="${r.dataUrl}" alt="${this.escape(r.name)}" class="preview">`;
                 }
                 html += `
                     <div class="result-item">
