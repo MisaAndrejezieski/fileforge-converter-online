@@ -81,6 +81,9 @@ class FileForgeWeb {
                 if (!window.FFmpegWASM?.FFmpeg) {
                     throw new Error('biblioteca FFmpeg não encontrada');
                 }
+                if (!window.crossOriginIsolated || typeof SharedArrayBuffer === 'undefined') {
+                    throw new Error('conversão de vídeo exige COOP/COEP ativo. Use um servidor HTTP com Cross-Origin-Opener-Policy: same-origin e Cross-Origin-Embedder-Policy: require-corp.');
+                }
                 const { FFmpeg } = window.FFmpegWASM;
                 this.ffmpeg = new FFmpeg();
 
