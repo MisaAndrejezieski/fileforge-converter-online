@@ -1,6 +1,7 @@
 // ─── FileForge Web ───────────────────────────────────────────────
+// FFmpeg via ESM do esm.sh (compatível com COEP graças aos headers CORS do esm.sh)
 
-import { FFmpeg } from './ffmpeg/ffmpeg.mjs';
+import { FFmpeg } from 'https://esm.sh/@ffmpeg/ffmpeg@0.12.10';
 
 class FileForgeWeb {
     constructor() {
@@ -33,7 +34,6 @@ class FileForgeWeb {
     }
 
     init() {
-        // Drag & drop
         this.uploadArea.addEventListener('dragover', (e) => {
             e.preventDefault();
             this.uploadArea.classList.add('dragover');
@@ -71,7 +71,7 @@ class FileForgeWeb {
         this.updateFormatOptions();
     }
 
-    // ─── FFMPEG LAZY LOAD (self-hosted, multithread) ─────────────
+    // ─── FFMPEG LAZY LOAD (self-hosted core, ESM wrapper via esm.sh) ─
     async loadFFmpeg() {
         if (this.ffmpegLoaded) return;
         if (this.ffmpegLoadPromise) return this.ffmpegLoadPromise;
@@ -84,8 +84,7 @@ class FileForgeWeb {
                 if (!window.crossOriginIsolated || typeof SharedArrayBuffer === 'undefined') {
                     throw new Error(
                         'Este site precisa dos headers COOP/COEP para rodar o FFmpeg. ' +
-                        'Use a Vercel ou um servidor com Cross-Origin-Opener-Policy: same-origin e ' +
-                        'Cross-Origin-Embedder-Policy: require-corp.'
+                        'Verifique se o vercel.json está configurado corretamente.'
                     );
                 }
 
@@ -100,6 +99,7 @@ class FileForgeWeb {
 
                 const base = new URL('ffmpeg/', window.location.href).href;
 
+                // Core local (self-hosted) — resolve o problema do COEP
                 await this.ffmpeg.load({
                     coreURL: `${base}ffmpeg-core.js`,
                     wasmURL: `${base}ffmpeg-core.wasm`,
@@ -107,7 +107,7 @@ class FileForgeWeb {
                 });
 
                 this.ffmpegLoaded = true;
-                console.log('✅ FFmpeg carregado (self-hosted, multithread)');
+                console.log('✅ FFmpeg carregado (core local, multithread)');
             } catch (err) {
                 console.error('❌ Falha ao carregar FFmpeg:', err);
                 throw new Error('falha ao carregar ffmpeg: ' + err.message);
@@ -298,7 +298,6 @@ class FileForgeWeb {
         const quality = parseInt(this.qualityRange.value) / 100;
         const results = [];
 
-        // Pré-carrega FFmpeg apenas se houver vídeos
         const hasVideo = filesToConvert.some(f => this.getCategory(f) === 'video');
         if (hasVideo) {
             try {
@@ -316,7 +315,6 @@ class FileForgeWeb {
             }
         }
 
-        // Processa arquivos sequencialmente
         for (let i = 0; i < filesToConvert.length; i++) {
             const file = filesToConvert[i];
             this.updateProgress(
@@ -424,7 +422,7 @@ class FileForgeWeb {
         });
     }
 
-    // ─── CONVERSÃO DE VÍDEO COM FFMPEG.WASM ──────────────────────
+    // ─── CONVERSÃO DE VÍDEO ──────────────────────────────────────
     async convertVideo(file, format, quality) {
         if (!this.ffmpegLoaded) {
             throw new Error('FFmpeg não carregado');
@@ -467,7 +465,6 @@ class FileForgeWeb {
     }
 
     buildFFmpegArgs(input, output, format, quality) {
-        // CRF: 18 (alta qualidade) → 40 (baixa qualidade)
         const crf = Math.round(40 - quality * 22);
 
         if (format === 'mp4') {
