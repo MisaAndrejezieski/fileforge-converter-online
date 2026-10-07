@@ -20,7 +20,7 @@
                 <h2>arraste seus arquivos aqui</h2>
                 <p>imagens, vídeos, textos e mais</p>
                 <input type="file" id="fileInput" multiple hidden
-                       accept="image/*,video/*,.txt,.md,.pdf">
+                       accept="image/*,video/*,.txt,.md">
                 <button class="btn btn-primary" onclick="document.getElementById('fileInput').click()">
                     selecionar arquivos
                 </button>
@@ -31,17 +31,17 @@
             <div class="setting-group">
                 <label for="formatSelect">formato de saída</label>
                 <select id="formatSelect">
-                    <optgroup label="Imagens">
+                    <optgroup label="Imagens" data-category="image">
                         <option value="png">PNG</option>
                         <option value="jpg">JPG</option>
                         <option value="webp">WebP</option>
                     </optgroup>
-                    <optgroup label="Vídeos">
+                    <optgroup label="Vídeos" data-category="video">
                         <option value="mp4">MP4</option>
                         <option value="webm">WebM</option>
                         <option value="gif">GIF</option>
                     </optgroup>
-                    <optgroup label="Texto">
+                    <optgroup label="Texto" data-category="text">
                         <option value="txt">TXT</option>
                         <option value="md">Markdown</option>
                     </optgroup>

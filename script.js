@@ -6,6 +6,8 @@ class FileForgeWeb {
         this.ffmpeg = null;
         this.ffmpegLoaded = false;
         this.ffmpegLoading = false;
+        this.isConverting = false;
+        this.resultUrls = new Set();
 
         // DOM
         this.uploadArea = document.getElementById('uploadArea');
@@ -62,6 +64,8 @@ class FileForgeWeb {
 
         this.convertBtn.addEventListener('click', () => this.convertFiles());
         this.clearBtn.addEventListener('click', () => this.clearAll());
+        this.formatSelect.addEventListener('change', () => this.updateQualityAvailability());
+        this.updateFormatOptions();
     }
 
     // ─── FFMPEG LAZY LOAD (self-hosted, multithread) ─────────────
@@ -127,30 +131,80 @@ class FileForgeWeb {
 
     // ─── FILE MANAGEMENT ──────────────────────────────────────────
     addFiles(newFiles) {
-        for (const file of newFiles) {
+        if (this.isConverting) return;
+        const unsupported = newFiles.filter(file => !this.getCategory(file));
+        if (unsupported.length) {
+            alert(`Formato não suportado: ${unsupported.map(file => file.name).join(', ')}`);
+        }
+        const supportedFiles = newFiles.filter(file => this.getCategory(file));
+        const categories = new Set(supportedFiles.map(file => this.getCategory(file)));
+        if (categories.size > 1 || (categories.size === 1 && this.files.length &&
+            !this.files.every(file => this.getCategory(file) === [...categories][0]))) {
+            alert('Adicione arquivos de apenas um tipo por vez (imagens, vídeos ou textos).');
+            return;
+        }
+        for (const file of supportedFiles) {
             if (!this.files.some(f => f.name === file.name && f.size === file.size)) {
                 this.files.push(file);
             }
         }
+        this.updateFormatOptions();
         this.render();
     }
 
     removeFile(index) {
+        if (this.isConverting) return;
         this.files.splice(index, 1);
+        this.updateFormatOptions();
         this.render();
     }
 
     clearAll() {
+        if (this.isConverting) return;
         this.files = [];
+        this.releaseResultUrls();
         this.resultsSection.hidden = true;
         this.resultsContainer.innerHTML = '';
         this.hideProgress();
+        this.updateFormatOptions();
         this.render();
+    }
+
+    getCategory(file) {
+        const name = file.name.toLowerCase();
+        if (file.type.startsWith('image/') || /\.(png|jpe?g|webp|bmp|gif|avif)$/.test(name)) return 'image';
+        if (file.type.startsWith('video/') || /\.(mp4|webm|mov|mkv|avi|m4v|mpeg|mpg)$/.test(name)) return 'video';
+        if (file.type === 'text/plain' || /\.(txt|md)$/.test(name)) return 'text';
+        return null;
+    }
+
+    updateFormatOptions() {
+        const category = this.files.length ? this.getCategory(this.files[0]) : null;
+        const groups = [...this.formatSelect.querySelectorAll('optgroup[data-category]')];
+        for (const group of groups) group.disabled = Boolean(category && group.dataset.category !== category);
+        const selectedGroup = groups.find(group => group.dataset.category === category);
+        if (selectedGroup && !selectedGroup.querySelector(`option[value="${this.formatSelect.value}"]`)) {
+            this.formatSelect.value = selectedGroup.querySelector('option').value;
+        } else if (!category && !groups.find(group => group.querySelector(`option[value="${this.formatSelect.value}"]`))) {
+            this.formatSelect.value = 'png';
+        }
+        this.updateQualityAvailability();
+    }
+
+    updateQualityAvailability() {
+        const isText = this.formatSelect.value === 'txt' || this.formatSelect.value === 'md';
+        this.qualityRange.disabled = isText || this.isConverting;
+    }
+
+    releaseResultUrls() {
+        for (const url of this.resultUrls) URL.revokeObjectURL(url);
+        this.resultUrls.clear();
     }
 
     render() {
         this.fileCount.textContent = this.files.length;
-        this.convertBtn.disabled = this.files.length === 0;
+        this.convertBtn.disabled = this.files.length === 0 || this.isConverting;
+        this.clearBtn.disabled = this.isConverting;
 
         if (this.files.length === 0) {
             this.fileListContainer.innerHTML = '<p class="empty-message">nenhum arquivo selecionado</p>';
@@ -172,7 +226,7 @@ class FileForgeWeb {
                         <span class="size">${size}</span>
                         <span class="type">${this.escape(type)}</span>
                     </div>
-                    <button class="remove-btn" data-index="${i}">✕</button>
+                    <button class="remove-btn" data-index="${i}" ${this.isConverting ? 'disabled' : ''} aria-label="Remover ${this.escape(f.name)}">✕</button>
                 </div>
             `;
         }
@@ -209,11 +263,16 @@ class FileForgeWeb {
     // ─── CONVERSÃO ────────────────────────────────────────────────
 
     async convertFiles() {
-        if (this.files.length === 0) return;
+        if (this.files.length === 0 || this.isConverting) return;
 
-        this.convertBtn.disabled = true;
-        this.clearBtn.disabled = true;
+        this.isConverting = true;
+        const filesToConvert = [...this.files];
+        this.fileInput.disabled = true;
+        this.formatSelect.disabled = true;
+        this.updateQualityAvailability();
+        this.render();
         this.convertBtn.textContent = '⏳ convertendo...';
+        this.releaseResultUrls();
         this.resultsSection.hidden = true;
         this.resultsContainer.innerHTML = '';
 
@@ -222,26 +281,29 @@ class FileForgeWeb {
         const results = [];
 
         // Pré-carrega FFmpeg apenas se houver vídeos
-        const hasVideo = this.files.some(f => f.type.startsWith('video/'));
+        const hasVideo = filesToConvert.some(f => this.getCategory(f) === 'video');
         if (hasVideo) {
             try {
                 await this.loadFFmpeg();
             } catch (err) {
                 alert('Erro ao carregar FFmpeg: ' + err.message);
                 this.convertBtn.textContent = '⚡ converter';
-                this.convertBtn.disabled = false;
-                this.clearBtn.disabled = false;
+                this.isConverting = false;
+                this.fileInput.disabled = false;
+                this.formatSelect.disabled = false;
+                this.updateQualityAvailability();
+                this.render();
                 this.hideProgress();
                 return;
             }
         }
 
         // Processa arquivos sequencialmente
-        for (let i = 0; i < this.files.length; i++) {
-            const file = this.files[i];
+        for (let i = 0; i < filesToConvert.length; i++) {
+            const file = filesToConvert[i];
             this.updateProgress(
-                (i / this.files.length) * 100,
-                `convertendo ${i + 1}/${this.files.length}: ${file.name}`
+                (i / filesToConvert.length) * 100,
+                `convertendo ${i + 1}/${filesToConvert.length}: ${file.name}`
             );
 
             try {
@@ -257,20 +319,32 @@ class FileForgeWeb {
         this.showResults(results);
 
         this.convertBtn.textContent = '⚡ converter';
-        this.convertBtn.disabled = false;
-        this.clearBtn.disabled = false;
+        this.isConverting = false;
+        this.fileInput.disabled = false;
+        this.formatSelect.disabled = false;
+        this.updateQualityAvailability();
+        this.render();
 
         setTimeout(() => this.hideProgress(), 1500);
     }
 
     async convert(file, format, quality) {
-        if (file.type.startsWith('image/')) {
+        if (this.getCategory(file) === 'image') {
+            if (!['png', 'jpg', 'webp'].includes(format)) {
+                return { name: file.name, success: false, error: 'formato de saída incompatível com imagem' };
+            }
             return this.convertImage(file, format, quality);
         }
-        if (file.type.startsWith('video/')) {
+        if (this.getCategory(file) === 'video') {
+            if (!['mp4', 'webm', 'gif'].includes(format)) {
+                return { name: file.name, success: false, error: 'formato de saída incompatível com vídeo' };
+            }
             return this.convertVideo(file, format, quality);
         }
-        if (file.type === 'text/plain' || file.name.endsWith('.txt') || file.name.endsWith('.md')) {
+        if (this.getCategory(file) === 'text') {
+            if (!['txt', 'md'].includes(format)) {
+                return { name: file.name, success: false, error: 'formato de saída incompatível com texto' };
+            }
             return this.convertText(file, format);
         }
         return { name: file.name, success: false, error: 'formato não suportado' };
@@ -296,17 +370,23 @@ class FileForgeWeb {
                     ctx.drawImage(img, 0, 0);
 
                     const mime = `image/${format === 'jpg' ? 'jpeg' : format}`;
-                    const dataUrl = canvas.toDataURL(mime, quality);
                     const baseName = file.name.replace(/\.[^.]+$/, '');
                     const outName = `${baseName}.${format}`;
-
-                    resolve({
-                        name: outName,
-                        success: true,
-                        dataUrl: dataUrl,
-                        format: format,
-                        isImage: true
-                    });
+                    canvas.toBlob((blob) => {
+                        if (!blob || blob.type !== mime) {
+                            reject(new Error(`seu navegador não consegue gerar ${format.toUpperCase()}`));
+                            return;
+                        }
+                        const dataUrl = URL.createObjectURL(blob);
+                        this.resultUrls.add(dataUrl);
+                        resolve({
+                            name: outName,
+                            success: true,
+                            dataUrl,
+                            format,
+                            isImage: true
+                        });
+                    }, mime, quality);
                 };
                 img.onerror = () => reject(new Error('erro ao carregar imagem'));
                 img.src = e.target.result;
@@ -335,22 +415,20 @@ class FileForgeWeb {
         // Constrói comando
         const args = this.buildFFmpegArgs(inputName, outputName, format, quality);
 
+        let dataUrl;
         try {
             await this.ffmpeg.exec(args);
+            const data = await this.ffmpeg.readFile(outputName);
+            const mime = this.getMimeForFormat(format);
+            const blob = new Blob([data], { type: mime });
+            dataUrl = URL.createObjectURL(blob);
+            this.resultUrls.add(dataUrl);
         } catch (err) {
-            try { await this.ffmpeg.deleteFile(inputName); } catch (_) {}
             throw new Error('falha na conversão: ' + err.message);
+        } finally {
+            try { await this.ffmpeg.deleteFile(inputName); } catch (_) {}
+            try { await this.ffmpeg.deleteFile(outputName); } catch (_) {}
         }
-
-        // Lê resultado
-        const data = await this.ffmpeg.readFile(outputName);
-        const mime = this.getMimeForFormat(format);
-        const blob = new Blob([data.buffer], { type: mime });
-        const dataUrl = URL.createObjectURL(blob);
-
-        // Limpeza da memória virtual
-        try { await this.ffmpeg.deleteFile(inputName); } catch (_) {}
-        try { await this.ffmpeg.deleteFile(outputName); } catch (_) {}
 
         return {
             name: `${baseName}.${format}`,
@@ -374,7 +452,7 @@ class FileForgeWeb {
                 '-preset', 'ultrafast',
                 '-pix_fmt', 'yuv420p',
                 '-movflags', '+faststart',
-                '-an',
+                '-c:a', 'aac',
                 output
             ];
         }
@@ -387,7 +465,7 @@ class FileForgeWeb {
                 '-b:v', '1M',
                 '-deadline', 'realtime',
                 '-cpu-used', '8',
-                '-an',
+                '-c:a', 'libvorbis',
                 output
             ];
         }
@@ -427,6 +505,7 @@ class FileForgeWeb {
 
                 const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
                 const dataUrl = URL.createObjectURL(blob);
+                this.resultUrls.add(dataUrl);
 
                 resolve({
                     name: outName,
