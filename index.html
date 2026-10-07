@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FileForge Web</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🔥 FileForge</h1>
+            <p>conversor de arquivos • 100% no navegador</p>
+        </header>
+
+        <section class="upload-area" id="uploadArea">
+            <div class="upload-content">
+                <span class="icon">📁</span>
+                <h2>arraste seus arquivos aqui</h2>
+                <p>imagens, vídeos, textos e mais</p>
+                <input type="file" id="fileInput" multiple hidden
+                       accept="image/*,video/*,.txt,.md,.pdf">
+                <button class="btn btn-primary" onclick="document.getElementById('fileInput').click()">
+                    selecionar arquivos
+                </button>
+            </div>
+        </section>
+
+        <section class="settings">
+            <div class="setting-group">
+                <label for="formatSelect">formato de saída</label>
+                <select id="formatSelect">
+                    <optgroup label="Imagens">
+                        <option value="png">PNG</option>
+                        <option value="jpg">JPG</option>
+                        <option value="webp">WebP</option>
+                    </optgroup>
+                    <optgroup label="Vídeos">
+                        <option value="mp4">MP4</option>
+                        <option value="webm">WebM</option>
+                        <option value="gif">GIF</option>
+                    </optgroup>
+                    <optgroup label="Texto">
+                        <option value="txt">TXT</option>
+                        <option value="md">Markdown</option>
+                    </optgroup>
+                </select>
+            </div>
+            <div class="setting-group">
+                <label for="qualityRange">qualidade</label>
+                <input type="range" id="qualityRange" min="10" max="100" value="85">
+                <span id="qualityValue">85%</span>
+            </div>
+            <button class="btn btn-success" id="convertBtn" disabled>⚡ converter</button>
+            <button class="btn btn-danger" id="clearBtn">🗑️ limpar</button>
+        </section>
+
+        <section class="progress-section" id="progressSection" hidden>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+            <p class="progress-text" id="progressText">preparando...</p>
+        </section>
+
+        <section class="file-list">
+            <h3>arquivos selecionados <span id="fileCount">0</span></h3>
+            <div id="fileListContainer">
+                <p class="empty-message">nenhum arquivo selecionado</p>
+            </div>
+        </section>
+
+        <section class="results" id="resultsSection" hidden>
+            <h3 id="resultTitle">✅ conversão concluída!</h3>
+            <div id="resultsContainer"></div>
+        </section>
+
+        <footer>
+            <p>feito com <span class="heart">❤</span> por <a href="https://github.com/MisaAndrejezieski">Misael Andrejezieski</a></p>
+            <p>
+                <a href="https://github.com/MisaAndrejezieski/fileforge-converter">github</a> •
+                <a href="https://www.linkedin.com/in/misael-andrejezieski-b4996720a/">linkedin</a>
+            </p>
+        </footer>
+    </div>
+
+    <!-- FFmpeg.wasm (UMD) -->
+    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
+    <script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
