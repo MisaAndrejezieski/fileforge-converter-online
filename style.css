@@ -128,9 +128,14 @@ header p {
     color: #0d0d1a;
 }
 
-.btn-danger:hover {
+.btn-danger:hover:not(:disabled) {
     background: #d45a6a;
     box-shadow: 0 0 25px rgba(224, 107, 122, 0.15);
+}
+
+.btn-danger:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
 }
 
 /* ─── SETTINGS ─── */
@@ -332,8 +337,13 @@ header p {
     flex-shrink: 0;
 }
 
-.file-item .remove-btn:hover {
+.file-item .remove-btn:hover:not(:disabled) {
     background: #2a1820;
+}
+
+.file-item .remove-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
 }
 
 .empty-message {
