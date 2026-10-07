@@ -6,7 +6,6 @@ class FileForgeWeb {
         this.ffmpeg = null;
         this.ffmpegLoaded = false;
         this.ffmpegLoading = false;
-        this.useMultithread = false;
 
         // DOM
         this.uploadArea = document.getElementById('uploadArea');
@@ -47,7 +46,6 @@ class FileForgeWeb {
         });
 
         this.uploadArea.addEventListener('click', (e) => {
-            // Evita duplo clique quando o botão interno é clicado
             if (e.target.tagName !== 'BUTTON') {
                 this.fileInput.click();
             }
@@ -66,11 +64,11 @@ class FileForgeWeb {
         this.clearBtn.addEventListener('click', () => this.clearAll());
     }
 
-    // ─── FFMPEG LAZY LOAD ─────────────────────────────────────────
+    // ─── FFMPEG LAZY LOAD (self-hosted, multithread) ─────────────
     async loadFFmpeg() {
         if (this.ffmpegLoaded) return;
+
         if (this.ffmpegLoading) {
-            // Aguarda carregamento em andamento
             while (this.ffmpegLoading) {
                 await new Promise(r => setTimeout(r, 100));
             }
@@ -78,53 +76,40 @@ class FileForgeWeb {
         }
 
         this.ffmpegLoading = true;
-        this.updateProgress(0, 'baixando ffmpeg (~30MB)...');
+        this.updateProgress(0, 'baixando ffmpeg (~30MB)... aguarde');
 
         const { FFmpeg } = FFmpegWASM;
-        const { toBlobURL } = FFmpegUtil;
-
         this.ffmpeg = new FFmpeg();
 
-        // Logs úteis no console
+        // Logs do ffmpeg no console
         this.ffmpeg.on('log', ({ message }) => {
             console.log('[ffmpeg]', message);
         });
 
-        this.ffmpeg.on('progress', ({ progress, time }) => {
+        // Progresso da conversão
+        this.ffmpeg.on('progress', ({ progress }) => {
             const pct = Math.min(Math.max(progress * 100, 0), 100);
             this.updateProgress(pct, `convertendo... ${pct.toFixed(0)}%`);
         });
 
-        // Tenta multithread primeiro (se SharedArrayBuffer estiver disponível)
-        const canUseMT = typeof SharedArrayBuffer !== 'undefined'
-                      && crossOriginIsolated === true;
+        // Arquivos locais (mesmo domínio → COEP permite)
+        const base = new URL('ffmpeg/', window.location.href).href;
 
         try {
-            if (canUseMT) {
-                const baseURL = 'https://unpkg.com/@ffmpeg/core-mt@0.12.6/dist/umd';
-                await this.ffmpeg.load({
-                    coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-                    wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-                    workerURL: await toBlobURL(`${baseURL}/ffmpeg-core.worker.js`, 'text/javascript'),
-                });
-                this.useMultithread = true;
-                console.log('✅ FFmpeg multithread carregado');
-            } else {
-                throw new Error('SharedArrayBuffer indisponível, usando single-thread');
-            }
-        } catch (err) {
-            console.warn('⚠️ Multithread falhou, usando single-thread:', err.message);
-            const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
             await this.ffmpeg.load({
-                coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-                wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+                coreURL: `${base}ffmpeg-core.js`,
+                wasmURL: `${base}ffmpeg-core.wasm`,
+                workerURL: `${base}ffmpeg-core.worker.js`,
             });
-            this.useMultithread = false;
-        }
 
-        this.ffmpegLoaded = true;
-        this.ffmpegLoading = false;
-        this.updateProgress(100, 'ffmpeg pronto!');
+            this.ffmpegLoaded = true;
+            this.ffmpegLoading = false;
+            console.log('✅ FFmpeg carregado (self-hosted, multithread)');
+        } catch (err) {
+            this.ffmpegLoading = false;
+            console.error('❌ Falha ao carregar FFmpeg:', err);
+            throw new Error('falha ao carregar ffmpeg: ' + err.message);
+        }
     }
 
     // ─── PROGRESS ─────────────────────────────────────────────────
@@ -338,9 +323,10 @@ class FileForgeWeb {
         }
 
         const inputExt = (file.name.split('.').pop() || 'mp4').toLowerCase();
-        const inputName = `input_${Date.now()}.${inputExt}`;
+        const stamp = Date.now();
+        const inputName = `input_${stamp}.${inputExt}`;
         const baseName = file.name.replace(/\.[^.]+$/, '');
-        const outputName = `output_${Date.now()}.${format}`;
+        const outputName = `output_${stamp}.${format}`;
 
         // Escreve arquivo na memória virtual do FFmpeg
         const fileData = new Uint8Array(await file.arrayBuffer());
@@ -352,7 +338,6 @@ class FileForgeWeb {
         try {
             await this.ffmpeg.exec(args);
         } catch (err) {
-            // Limpeza em caso de erro
             try { await this.ffmpeg.deleteFile(inputName); } catch (_) {}
             throw new Error('falha na conversão: ' + err.message);
         }
