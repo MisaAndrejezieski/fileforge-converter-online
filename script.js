@@ -6,6 +6,7 @@ class FileForgeWeb {
         this.ffmpeg = null;
         this.ffmpegLoaded = false;
         this.ffmpegLoading = false;
+        this.ffmpegLoadPromise = null;
         this.isConverting = false;
         this.resultUrls = new Set();
 
@@ -71,49 +72,42 @@ class FileForgeWeb {
     // ─── FFMPEG LAZY LOAD (self-hosted, multithread) ─────────────
     async loadFFmpeg() {
         if (this.ffmpegLoaded) return;
-
-        if (this.ffmpegLoading) {
-            while (this.ffmpegLoading) {
-                await new Promise(r => setTimeout(r, 100));
-            }
-            return;
-        }
+        if (this.ffmpegLoadPromise) return this.ffmpegLoadPromise;
 
         this.ffmpegLoading = true;
         this.updateProgress(0, 'baixando ffmpeg (~30MB)... aguarde');
+        this.ffmpegLoadPromise = (async () => {
+            try {
+                if (!window.FFmpegWASM?.FFmpeg) {
+                    throw new Error('biblioteca FFmpeg não encontrada');
+                }
+                const { FFmpeg } = window.FFmpegWASM;
+                this.ffmpeg = new FFmpeg();
 
-        const { FFmpeg } = FFmpegWASM;
-        this.ffmpeg = new FFmpeg();
+                this.ffmpeg.on('log', ({ message }) => console.log('[ffmpeg]', message));
+                this.ffmpeg.on('progress', ({ progress }) => {
+                    const pct = Math.min(Math.max(progress * 100, 0), 100);
+                    this.updateProgress(pct, `convertendo... ${pct.toFixed(0)}%`);
+                });
 
-        // Logs do ffmpeg no console
-        this.ffmpeg.on('log', ({ message }) => {
-            console.log('[ffmpeg]', message);
-        });
+                const base = new URL('ffmpeg/', window.location.href).href;
+                await this.ffmpeg.load({
+                    coreURL: `${base}ffmpeg-core.js`,
+                    wasmURL: `${base}ffmpeg-core.wasm`,
+                    workerURL: `${base}ffmpeg-core.worker.js`,
+                });
 
-        // Progresso da conversão
-        this.ffmpeg.on('progress', ({ progress }) => {
-            const pct = Math.min(Math.max(progress * 100, 0), 100);
-            this.updateProgress(pct, `convertendo... ${pct.toFixed(0)}%`);
-        });
-
-        // Arquivos locais (mesmo domínio → COEP permite)
-        const base = new URL('ffmpeg/', window.location.href).href;
-
-        try {
-            await this.ffmpeg.load({
-                coreURL: `${base}ffmpeg-core.js`,
-                wasmURL: `${base}ffmpeg-core.wasm`,
-                workerURL: `${base}ffmpeg-core.worker.js`,
-            });
-
-            this.ffmpegLoaded = true;
-            this.ffmpegLoading = false;
-            console.log('✅ FFmpeg carregado (self-hosted, multithread)');
-        } catch (err) {
-            this.ffmpegLoading = false;
-            console.error('❌ Falha ao carregar FFmpeg:', err);
-            throw new Error('falha ao carregar ffmpeg: ' + err.message);
-        }
+                this.ffmpegLoaded = true;
+                console.log('✅ FFmpeg carregado (self-hosted, multithread)');
+            } catch (err) {
+                console.error('❌ Falha ao carregar FFmpeg:', err);
+                throw new Error('falha ao carregar ffmpeg: ' + err.message);
+            } finally {
+                this.ffmpegLoading = false;
+                this.ffmpegLoadPromise = null;
+            }
+        })();
+        return this.ffmpegLoadPromise;
     }
 
     // ─── PROGRESS ─────────────────────────────────────────────────
@@ -255,9 +249,13 @@ class FileForgeWeb {
     }
 
     escape(text) {
-        const d = document.createElement('div');
-        d.textContent = text;
-        return d.innerHTML;
+        return String(text).replace(/[&<>"']/g, (char) => ({
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#39;'
+        })[char]);
     }
 
     // ─── CONVERSÃO ────────────────────────────────────────────────
@@ -356,37 +354,41 @@ class FileForgeWeb {
             reader.onload = (e) => {
                 const img = new Image();
                 img.onload = () => {
-                    const canvas = document.createElement('canvas');
-                    canvas.width = img.width;
-                    canvas.height = img.height;
-                    const ctx = canvas.getContext('2d');
+                    try {
+                        const canvas = document.createElement('canvas');
+                        canvas.width = img.width;
+                        canvas.height = img.height;
+                        const ctx = canvas.getContext('2d');
+                        if (!ctx) throw new Error('não foi possível processar esta imagem');
 
-                    // Fundo branco para JPG (evita preto em PNGs transparentes)
-                    if (format === 'jpg' || format === 'jpeg') {
-                        ctx.fillStyle = '#ffffff';
-                        ctx.fillRect(0, 0, canvas.width, canvas.height);
-                    }
-
-                    ctx.drawImage(img, 0, 0);
-
-                    const mime = `image/${format === 'jpg' ? 'jpeg' : format}`;
-                    const baseName = file.name.replace(/\.[^.]+$/, '');
-                    const outName = `${baseName}.${format}`;
-                    canvas.toBlob((blob) => {
-                        if (!blob || blob.type !== mime) {
-                            reject(new Error(`seu navegador não consegue gerar ${format.toUpperCase()}`));
-                            return;
+                        if (format === 'jpg' || format === 'jpeg') {
+                            ctx.fillStyle = '#ffffff';
+                            ctx.fillRect(0, 0, canvas.width, canvas.height);
                         }
-                        const dataUrl = URL.createObjectURL(blob);
-                        this.resultUrls.add(dataUrl);
-                        resolve({
-                            name: outName,
-                            success: true,
-                            dataUrl,
-                            format,
-                            isImage: true
-                        });
-                    }, mime, quality);
+
+                        ctx.drawImage(img, 0, 0);
+
+                        const mime = `image/${format === 'jpg' ? 'jpeg' : format}`;
+                        const baseName = file.name.replace(/\.[^.]+$/, '');
+                        const outName = `${baseName}.${format}`;
+                        canvas.toBlob((blob) => {
+                            if (!blob || blob.type !== mime) {
+                                reject(new Error(`seu navegador não consegue gerar ${format.toUpperCase()}`));
+                                return;
+                            }
+                            const dataUrl = URL.createObjectURL(blob);
+                            this.resultUrls.add(dataUrl);
+                            resolve({
+                                name: outName,
+                                success: true,
+                                dataUrl,
+                                format,
+                                isImage: true
+                            });
+                        }, mime, quality);
+                    } catch (err) {
+                        reject(new Error(`falha ao processar imagem: ${err.message}`));
+                    }
                 };
                 img.onerror = () => reject(new Error('erro ao carregar imagem'));
                 img.src = e.target.result;
@@ -408,15 +410,11 @@ class FileForgeWeb {
         const baseName = file.name.replace(/\.[^.]+$/, '');
         const outputName = `output_${stamp}.${format}`;
 
-        // Escreve arquivo na memória virtual do FFmpeg
-        const fileData = new Uint8Array(await file.arrayBuffer());
-        await this.ffmpeg.writeFile(inputName, fileData);
-
-        // Constrói comando
-        const args = this.buildFFmpegArgs(inputName, outputName, format, quality);
-
         let dataUrl;
         try {
+            const fileData = new Uint8Array(await file.arrayBuffer());
+            await this.ffmpeg.writeFile(inputName, fileData);
+            const args = this.buildFFmpegArgs(inputName, outputName, format, quality);
             await this.ffmpeg.exec(args);
             const data = await this.ffmpeg.readFile(outputName);
             const mime = this.getMimeForFormat(format);
